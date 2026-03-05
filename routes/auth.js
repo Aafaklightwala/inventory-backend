@@ -28,7 +28,12 @@ router.post("/register", async (req, res) => {
       "SELECT * FROM users WHERE email = ? OR mobile = ?",
       [email, mobile],
       async (err, result) => {
-        if (result.length > 0) {
+        if (err) {
+          console.error("DB Error:", err);
+          return res.status(500).json({ message: "Database error" });
+        }
+
+        if (!result || result.length > 0) {
           return res.status(400).json({ message: "User already exists" });
         }
 
@@ -70,7 +75,12 @@ router.post("/login", (req, res) => {
     "SELECT * FROM users WHERE email = ? OR mobile = ?",
     [identifier, identifier],
     async (err, result) => {
-      if (result.length === 0) {
+      if (err) {
+        console.error("DB Error:", err);
+        return res.status(500).json({ message: "Database error" });
+      }
+
+      if (!result || result.length === 0) {
         return res.status(400).json({ message: "Invalid credentials" });
       }
 
