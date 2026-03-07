@@ -85,7 +85,11 @@ router.post("/login", (req, res) => {
       }
 
       const user = result[0];
-
+      if (user.status !== "active") {
+        return res.status(403).json({
+          message: "Your account is pending admin approval",
+        });
+      }
       const isMatch = await bcrypt.compare(password, user.password);
 
       if (!isMatch) {
