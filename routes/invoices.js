@@ -418,7 +418,7 @@ router.get("/:id/download", auth, async (req, res) => {
     const invoice = invRows[0];
 
     const [items] = await db.promise().query(
-      `SELECT ii.*, p.name, ii.unit_price, ii.qty
+      `SELECT ii.*, p.name, ii.price, ii.qty
        FROM invoice_items ii
        LEFT JOIN products p ON ii.product_id = p.id
        WHERE ii.invoice_id=? AND ii.user_id=?`,
