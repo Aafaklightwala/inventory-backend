@@ -1,108 +1,98 @@
-// invoices.routes.js — multi-user secure version
+// invoices.routes.js — with proforma convert support
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const auth = require("../middleware/auth");
 
-/* ================= GET ALL INVOICES ================= */
+const GST = 5;
 
+/* ── GET ALL (shows invoice_type) ─────────────── */
 router.get("/", auth, async (req, res) => {
   try {
-    const userId = req.user.id;
-
     const [invoices] = await db
       .promise()
       .query("SELECT * FROM invoices WHERE user_id=? ORDER BY id DESC", [
-        userId,
+        req.user.id,
       ]);
-
     res.json(invoices);
   } catch (err) {
     res.status(500).json(err);
   }
 });
 
-/* ================= GET INVOICE DETAILS ================= */
-
+/* ── GET SINGLE ───────────────────────────────── */
 router.get("/:id", auth, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { id } = req.params;
-
     const [invoice] = await db
       .promise()
-      .query("SELECT * FROM invoices WHERE id=? AND user_id=?", [id, userId]);
-
-    if (!invoice.length) {
-      return res.status(404).json({ message: "Invoice not found" });
-    }
+      .query("SELECT * FROM invoices WHERE id=? AND user_id=?", [
+        req.params.id,
+        req.user.id,
+      ]);
+    if (!invoice.length) return res.status(404).json({ message: "Not found" });
 
     const [items] = await db.promise().query(
-      `SELECT ii.*, p.name
-         FROM invoice_items ii
-         JOIN products p ON ii.product_id = p.id
-         WHERE ii.invoice_id=? AND ii.user_id=?`,
-      [id, userId],
+      `SELECT ii.*, p.name FROM invoice_items ii
+       JOIN products p ON ii.product_id = p.id
+       WHERE ii.invoice_id=? AND ii.user_id=?`,
+      [req.params.id, req.user.id],
+    );
+    res.json({ invoice: invoice[0], items });
+  } catch (err) {
+    res.status(500).json(err);
+  }
+});
+
+/* ── CONVERT PROFORMA → GST ───────────────────── */
+router.post("/convert-to-gst/:id", auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const invoiceId = req.params.id;
+
+    const [rows] = await db
+      .promise()
+      .query(
+        "SELECT * FROM invoices WHERE id=? AND user_id=? AND invoice_type='proforma'",
+        [invoiceId, userId],
+      );
+
+    if (!rows.length)
+      return res.status(404).json({ message: "Proforma invoice not found" });
+
+    if (rows[0].payment_status === "cancelled")
+      return res
+        .status(400)
+        .json({ message: "Cannot convert a cancelled invoice" });
+
+    const inv = rows[0];
+    const subTotal = parseFloat(inv.sub_total);
+    const gstAmount = (subTotal * GST) / 100;
+    const discountAmt = parseFloat(inv.discount) || 0;
+    const finalTotal = subTotal + gstAmount - discountAmt;
+    const newNumber = "INV-" + Date.now();
+
+    await db.promise().query(
+      `UPDATE invoices SET
+         invoice_number = ?, invoice_type = 'gst',
+         gst_percent = ?, gst_amount = ?,
+         final_total = ?, payment_status = 'pending'
+       WHERE id=? AND user_id=?`,
+      [newNumber, GST, gstAmount, finalTotal, invoiceId, userId],
     );
 
     res.json({
-      invoice: invoice[0],
-      items,
+      message: "Converted to GST invoice",
+      invoice_id: invoiceId,
+      new_invoice_number: newNumber,
+      gst_amount: gstAmount,
+      final_total: finalTotal,
     });
   } catch (err) {
     res.status(500).json(err);
   }
 });
 
-/* ================= DOWNLOAD INVOICE ================= */
-
-router.get("/:id/download", auth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { id } = req.params;
-
-    const [invoice] = await db
-      .promise()
-      .query("SELECT * FROM invoices WHERE id=? AND user_id=?", [id, userId]);
-
-    if (!invoice.length) {
-      return res.status(404).json({ message: "Invoice not found" });
-    }
-
-    // Here you can generate PDF safely
-    res.json({ message: "Download logic here" });
-  } catch (err) {
-    res.status(500).json(err);
-  }
-});
-
-/* ================= EXPORT BY DATE ================= */
-
-router.get("/export", auth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { start, end } = req.query;
-
-    if (!start || !end) {
-      return res.status(400).json({ message: "Start and End date required" });
-    }
-
-    const [invoices] = await db.promise().query(
-      `SELECT * FROM invoices
-       WHERE user_id=? 
-       AND DATE(created_at) BETWEEN ? AND ?
-       ORDER BY id DESC`,
-      [userId, start, end],
-    );
-
-    res.json(invoices);
-  } catch (err) {
-    res.status(500).json(err);
-  }
-});
-
-/* ================= CANCEL INVOICE ================= */
-
+/* ── CANCEL ───────────────────────────────────── */
 router.post("/cancel", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -114,24 +104,16 @@ router.post("/cancel", auth, async (req, res) => {
         invoice_id,
         userId,
       ]);
+    if (!invoice.length) return res.status(404).json({ message: "Not found" });
+    if (invoice[0].payment_status === "cancelled")
+      return res.status(400).json({ message: "Already cancelled" });
 
-    if (!invoice.length) {
-      return res.status(404).json({ message: "Invoice not found" });
-    }
-
-    if (invoice[0].payment_status === "cancelled") {
-      return res.status(400).json({ message: "Invoice already cancelled" });
-    }
-
-    // Get invoice items
     const [items] = await db
       .promise()
       .query("SELECT * FROM invoice_items WHERE invoice_id=? AND user_id=?", [
         invoice_id,
         userId,
       ]);
-
-    // Restore stock safely
     for (const item of items) {
       await db
         .promise()
@@ -140,16 +122,32 @@ router.post("/cancel", auth, async (req, res) => {
           [item.qty, item.product_id, userId],
         );
     }
-
-    // Update invoice status
     await db
       .promise()
       .query(
         "UPDATE invoices SET payment_status='cancelled' WHERE id=? AND user_id=?",
         [invoice_id, userId],
       );
-
     res.json({ message: "Invoice cancelled & stock restored" });
+  } catch (err) {
+    res.status(500).json(err);
+  }
+});
+
+/* ── EXPORT BY DATE ───────────────────────────── */
+router.get("/export", auth, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end)
+      return res.status(400).json({ message: "Start and End date required" });
+
+    const [invoices] = await db
+      .promise()
+      .query(
+        `SELECT * FROM invoices WHERE user_id=? AND DATE(created_at) BETWEEN ? AND ? ORDER BY id DESC`,
+        [req.user.id, start, end],
+      );
+    res.json(invoices);
   } catch (err) {
     res.status(500).json(err);
   }
