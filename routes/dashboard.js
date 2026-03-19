@@ -108,12 +108,12 @@ router.get("/", auth, async (req, res) => {
 
     const [[paymentMode]] = await db.promise().query(
       `
-      SELECT 
-        SUM(CASE WHEN payment_mode='cash' THEN 1 ELSE 0 END) as cash,
-        SUM(CASE WHEN payment_mode='razorpay' THEN 1 ELSE 0 END) as razorpay
-      FROM invoices
-      WHERE user_id=? ${dateQuery}
-      `,
+  SELECT 
+    IFNULL(SUM(CASE WHEN payment_mode='cash' THEN final_total ELSE 0 END),0) as cash,
+    IFNULL(SUM(CASE WHEN payment_mode='razorpay' THEN final_total ELSE 0 END),0) as razorpay
+  FROM invoices
+  WHERE user_id=? ${dateQuery}
+  `,
       [userId, ...dateParams],
     );
 
