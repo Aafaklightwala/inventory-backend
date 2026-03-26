@@ -1,17 +1,14 @@
-// products.routes.js — updated with category + sku columns
+// products.routes.js — with hotkey column support
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const auth = require("../middleware/auth");
 
-/**
- * GET ALL PRODUCTS
- */
+/* ── GET ALL ──────────────────────────────────── */
 router.get("/", auth, (req, res) => {
-  const userId = req.user.id;
   db.query(
     "SELECT * FROM products WHERE user_id=? ORDER BY id DESC",
-    [userId],
+    [req.user.id],
     (err, result) => {
       if (err) return res.status(500).json(err);
       res.json(result);
@@ -19,27 +16,24 @@ router.get("/", auth, (req, res) => {
   );
 });
 
-/**
- * ADD PRODUCT
- */
+/* ── ADD PRODUCT ──────────────────────────────── */
 router.post("/", auth, (req, res) => {
-  const { name, sku, category, price, stock, grams } = req.body;
-
-  if (!name || !price) {
+  const { name, sku, hotkey, category, price, stock, grams } = req.body;
+  if (!name || !price)
     return res.status(400).json({ message: "Name and price are required" });
-  }
-  const userId = req.user.id;
 
   db.query(
-    "INSERT INTO products (name, sku, category, price, stock, grams,user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO products (name, sku, hotkey, category, price, stock, grams, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name,
       sku || null,
+      hotkey || null,
       category || null,
       price,
       stock || 0,
       grams || 0,
-      userId,
+      req.user.id,
     ],
     (err) => {
       if (err) return res.status(500).json(err);
@@ -48,16 +42,23 @@ router.post("/", auth, (req, res) => {
   );
 });
 
-/**
- * UPDATE PRODUCT
- */
+/* ── UPDATE PRODUCT ───────────────────────────── */
 router.put("/:id", auth, (req, res) => {
-  const { name, sku, category, price, stock, grams } = req.body;
-  const { id } = req.params;
-  const userId = req.user.id;
+  const { name, sku, hotkey, category, price, stock, grams } = req.body;
   db.query(
-    "UPDATE products SET name=?, sku=?, category=?, price=?, stock=?, grams=? WHERE id=? AND user_id=?",
-    [name, sku || null, category || null, price, stock, grams, id, userId],
+    `UPDATE products SET name=?, sku=?, hotkey=?, category=?, price=?, stock=?, grams=?
+     WHERE id=? AND user_id=?`,
+    [
+      name,
+      sku || null,
+      hotkey || null,
+      category || null,
+      price,
+      stock,
+      grams,
+      req.params.id,
+      req.user.id,
+    ],
     (err) => {
       if (err) return res.status(500).json(err);
       res.json({ message: "Product updated successfully" });
@@ -65,15 +66,11 @@ router.put("/:id", auth, (req, res) => {
   );
 });
 
-/**
- * DELETE PRODUCT
- */
+/* ── DELETE PRODUCT ───────────────────────────── */
 router.delete("/:id", auth, (req, res) => {
-  const { id } = req.params;
-  const userId = req.user.id;
   db.query(
     "DELETE FROM products WHERE id=? AND user_id=?",
-    [id, userId],
+    [req.params.id, req.user.id],
     (err) => {
       if (err) return res.status(500).json(err);
       res.json({ message: "Product deleted successfully" });
@@ -81,10 +78,7 @@ router.delete("/:id", auth, (req, res) => {
   );
 });
 
-/**
- * BULK IMPORT (Excel/CSV)
- * Matches on name. Updates stock if exists, inserts if not.
- */
+/* ── BULK IMPORT ──────────────────────────────── */
 router.post("/bulk-import", auth, async (req, res) => {
   const products = req.body;
   const userId = req.user.id;
@@ -95,48 +89,50 @@ router.post("/bulk-import", auth, async (req, res) => {
     for (const item of products) {
       const [existing] = await db
         .promise()
-        .query("SELECT * FROM products WHERE name = ? AND user_id = ?", [
+        .query("SELECT * FROM products WHERE name=? AND user_id=?", [
           item.name,
           userId,
         ]);
-
       if (existing.length > 0) {
-        await db
-          .promise()
-          .query(
-            "UPDATE products SET stock = stock + ?, sku=COALESCE(?,sku), category=COALESCE(?,category), price=COALESCE(?,price), grams=COALESCE(?,grams) WHERE name = ? AND user_id = ?",
-            [
-              item.stock || 0,
-              item.sku || null,
-              item.category || null,
-              item.price || null,
-              item.grams || null,
-              item.name,
-              userId,
-            ],
-          );
+        await db.promise().query(
+          `UPDATE products SET stock=stock+?,
+             sku=COALESCE(?,sku), hotkey=COALESCE(?,hotkey),
+             category=COALESCE(?,category), price=COALESCE(?,price),
+             grams=COALESCE(?,grams)
+           WHERE name=? AND user_id=?`,
+          [
+            item.stock || 0,
+            item.sku || null,
+            item.hotkey || null,
+            item.category || null,
+            item.price || null,
+            item.grams || null,
+            item.name,
+            userId,
+          ],
+        );
         updated++;
       } else {
-        await db
-          .promise()
-          .query(
-            "INSERT INTO products (name, sku, category, price, stock, grams, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-              item.name,
-              item.sku || null,
-              item.category || null,
-              item.price || 0,
-              item.stock || 0,
-              item.grams || 0,
-              userId,
-            ],
-          );
+        await db.promise().query(
+          `INSERT INTO products (name,sku,hotkey,category,price,stock,grams,user_id)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [
+            item.name,
+            item.sku || null,
+            item.hotkey || null,
+            item.category || null,
+            item.price || 0,
+            item.stock || 0,
+            item.grams || 0,
+            userId,
+          ],
+        );
         added++;
       }
     }
     res.json({ added, updated });
-  } catch (error) {
-    res.status(500).json({ message: "Import failed", error });
+  } catch (err) {
+    res.status(500).json({ message: "Import failed", err });
   }
 });
 
