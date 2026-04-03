@@ -9,7 +9,7 @@ router.get("/products/:userId", (req, res) => {
   const userId = req.params.userId;
 
   db.query(
-    "SELECT id,name,sku,price,grams,stock FROM products WHERE user_id=? AND stock>0 ORDER BY id DESC",
+    "SELECT id,name,sku,price,grams,stock,image FROM products WHERE user_id=? AND stock>0 ORDER BY id DESC",
     [userId],
     (err, result) => {
       if (err) {

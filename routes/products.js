@@ -1,4 +1,4 @@
-// products.routes.js — with hotkey column support
+// products.routes.js — with image support
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
@@ -18,13 +18,13 @@ router.get("/", auth, (req, res) => {
 
 /* ── ADD PRODUCT ──────────────────────────────── */
 router.post("/", auth, (req, res) => {
-  const { name, sku, hotkey, category, price, stock, grams } = req.body;
+  const { name, sku, hotkey, category, price, stock, grams, image } = req.body;
   if (!name || !price)
     return res.status(400).json({ message: "Name and price are required" });
 
   db.query(
-    `INSERT INTO products (name, sku, hotkey, category, price, stock, grams, user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO products (name, sku, hotkey, category, price, stock, grams, image, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name,
       sku || null,
@@ -33,6 +33,7 @@ router.post("/", auth, (req, res) => {
       price,
       stock || 0,
       grams || 0,
+      image || null,
       req.user.id,
     ],
     (err) => {
@@ -44,9 +45,9 @@ router.post("/", auth, (req, res) => {
 
 /* ── UPDATE PRODUCT ───────────────────────────── */
 router.put("/:id", auth, (req, res) => {
-  const { name, sku, hotkey, category, price, stock, grams } = req.body;
+  const { name, sku, hotkey, category, price, stock, grams, image } = req.body;
   db.query(
-    `UPDATE products SET name=?, sku=?, hotkey=?, category=?, price=?, stock=?, grams=?
+    `UPDATE products SET name=?, sku=?, hotkey=?, category=?, price=?, stock=?, grams=?, image=?
      WHERE id=? AND user_id=?`,
     [
       name,
@@ -56,6 +57,7 @@ router.put("/:id", auth, (req, res) => {
       price,
       stock,
       grams,
+      image || null,
       req.params.id,
       req.user.id,
     ],
@@ -114,8 +116,8 @@ router.post("/bulk-import", auth, async (req, res) => {
         updated++;
       } else {
         await db.promise().query(
-          `INSERT INTO products (name,sku,hotkey,category,price,stock,grams,user_id)
-           VALUES (?,?,?,?,?,?,?,?)`,
+          `INSERT INTO products (name,sku,hotkey,category,price,stock,grams,image,user_id)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
           [
             item.name,
             item.sku || null,
@@ -124,6 +126,7 @@ router.post("/bulk-import", auth, async (req, res) => {
             item.price || 0,
             item.stock || 0,
             item.grams || 0,
+            item.image || null,
             userId,
           ],
         );
