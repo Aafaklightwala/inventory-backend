@@ -2,24 +2,42 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 
-/**
- * PUBLIC PRODUCTS FOR WEBSITE
- */
-router.get("/products/:userId", (req, res) => {
+/* ── PUBLIC PRODUCTS WITH INGREDIENTS ────────── */
+router.get("/products/:userId", async (req, res) => {
   const userId = req.params.userId;
 
-  db.query(
-    "SELECT id,name,sku,price,grams,stock,image FROM products WHERE user_id=? AND stock>0 ORDER BY id DESC",
-    [userId],
-    (err, result) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ message: "Database error" });
-      }
+  try {
+    const [products] = await db.promise().query(
+      `SELECT p.id, p.name, p.sku, p.price, p.grams, p.stock, p.image,
+              IFNULL(
+                JSON_ARRAYAGG(
+                  CASE WHEN pi.id IS NOT NULL
+                  THEN JSON_OBJECT('name', pi.name, 'percentage', pi.percentage)
+                  ELSE NULL END
+                ),
+                JSON_ARRAY()
+              ) AS ingredients
+       FROM products p
+       LEFT JOIN product_ingredients pi ON p.id = pi.product_id
+       WHERE p.user_id = ? AND p.stock > 0
+       GROUP BY p.id
+       ORDER BY p.id DESC`,
+      [userId],
+    );
 
-      res.json(result);
-    },
-  );
+    const result = products.map((p) => ({
+      ...p,
+      ingredients:
+        typeof p.ingredients === "string"
+          ? JSON.parse(p.ingredients).filter(Boolean)
+          : (p.ingredients || []).filter(Boolean),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
 module.exports = router;
