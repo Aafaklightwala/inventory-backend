@@ -1,10 +1,11 @@
-// products.routes.js — with image + ingredients support
+// products.routes.js — UPDATED with barcode support
+// Changes: barcode field added to GET, POST, PUT, bulk-import
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const auth = require("../middleware/auth");
 
-/* ── GET ALL (with ingredients) ───────────────── */
+/* ── GET ALL (with ingredients + barcode) ──── */
 router.get("/", auth, async (req, res) => {
   try {
     const [products] = await db.promise().query(
@@ -42,12 +43,31 @@ router.get("/", auth, async (req, res) => {
     res.status(500).json(err);
   }
 });
-/* ── ADD PRODUCT (with ingredients) ──────────── */
+
+/* ── GET BY BARCODE (used by scanner lookup) ── */
+router.get("/barcode/:code", auth, async (req, res) => {
+  try {
+    const [rows] = await db
+      .promise()
+      .query(
+        `SELECT * FROM products WHERE (barcode = ? OR sku = ?) AND user_id = ? AND stock > 0 LIMIT 1`,
+        [req.params.code, req.params.code, req.user.id],
+      );
+    if (!rows.length)
+      return res.status(404).json({ message: "Product not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json(err);
+  }
+});
+
+/* ── ADD PRODUCT (with barcode + ingredients) ── */
 router.post("/", auth, async (req, res) => {
   const {
     name,
     sku,
     hotkey,
+    barcode,
     category,
     price,
     stock,
@@ -59,7 +79,6 @@ router.post("/", auth, async (req, res) => {
   if (!name || !price)
     return res.status(400).json({ message: "Name and price are required" });
 
-  // Validate total percentage if ingredients provided
   if (ingredients && ingredients.length > 0) {
     const total = ingredients.reduce(
       (sum, i) => sum + Number(i.percentage || 0),
@@ -74,12 +93,13 @@ router.post("/", auth, async (req, res) => {
 
   try {
     const [result] = await db.promise().query(
-      `INSERT INTO products (name, sku, hotkey, category, price, stock, grams, image, user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO products (name, sku, hotkey, barcode, category, price, stock, grams, image, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         sku || null,
         hotkey || null,
+        barcode || null,
         category || null,
         price,
         stock || 0,
@@ -91,11 +111,15 @@ router.post("/", auth, async (req, res) => {
 
     const productId = result.insertId;
 
-    // Insert ingredients if provided
     if (ingredients && ingredients.length > 0) {
       const values = ingredients
         .filter((i) => i.name && i.name.trim())
-        .map((i) => [productId, i.name.trim(), Number(i.percentage)]);
+        .map((i) => [
+          productId,
+          req.user.id,
+          i.name.trim(),
+          Number(i.percentage),
+        ]);
 
       if (values.length > 0) {
         await db
@@ -109,16 +133,22 @@ router.post("/", auth, async (req, res) => {
 
     res.json({ message: "Product added successfully" });
   } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res
+        .status(400)
+        .json({ message: "A product with this barcode already exists." });
+    }
     res.status(500).json(err);
   }
 });
 
-/* ── UPDATE PRODUCT (with ingredients) ───────── */
+/* ── UPDATE PRODUCT (with barcode + ingredients) ── */
 router.put("/:id", auth, async (req, res) => {
   const {
     name,
     sku,
     hotkey,
+    barcode,
     category,
     price,
     stock,
@@ -129,7 +159,6 @@ router.put("/:id", auth, async (req, res) => {
   const productId = req.params.id;
   const userId = req.user.id;
 
-  // Validate total percentage if ingredients provided
   if (ingredients && ingredients.length > 0) {
     const total = ingredients.reduce(
       (sum, i) => sum + Number(i.percentage || 0),
@@ -144,12 +173,14 @@ router.put("/:id", auth, async (req, res) => {
 
   try {
     await db.promise().query(
-      `UPDATE products SET name=?, sku=?, hotkey=?, category=?, price=?, stock=?, grams=?, image=?
+      `UPDATE products
+       SET name=?, sku=?, hotkey=?, barcode=?, category=?, price=?, stock=?, grams=?, image=?
        WHERE id=? AND user_id=?`,
       [
         name,
         sku || null,
         hotkey || null,
+        barcode || null,
         category || null,
         price,
         stock,
@@ -160,7 +191,6 @@ router.put("/:id", auth, async (req, res) => {
       ],
     );
 
-    // Delete old ingredients and re-insert (simplest correct approach)
     await db
       .promise()
       .query("DELETE FROM product_ingredients WHERE product_id=?", [productId]);
@@ -182,13 +212,17 @@ router.put("/:id", auth, async (req, res) => {
 
     res.json({ message: "Product updated successfully" });
   } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res
+        .status(400)
+        .json({ message: "A product with this barcode already exists." });
+    }
     res.status(500).json(err);
   }
 });
 
-/* ── DELETE PRODUCT ───────────────────────────── */
+/* ── DELETE PRODUCT ─────────────────────────── */
 router.delete("/:id", auth, (req, res) => {
-  // Ingredients auto-deleted via ON DELETE CASCADE
   db.query(
     "DELETE FROM products WHERE id=? AND user_id=?",
     [req.params.id, req.user.id],
@@ -199,7 +233,7 @@ router.delete("/:id", auth, (req, res) => {
   );
 });
 
-/* ── BULK IMPORT ──────────────────────────────── */
+/* ── BULK IMPORT (with barcode) ─────────────── */
 router.post("/bulk-import", auth, async (req, res) => {
   const products = req.body;
   const userId = req.user.id;
@@ -219,6 +253,7 @@ router.post("/bulk-import", auth, async (req, res) => {
         await db.promise().query(
           `UPDATE products SET stock=stock+?,
              sku=COALESCE(?,sku), hotkey=COALESCE(?,hotkey),
+             barcode=COALESCE(?,barcode),
              category=COALESCE(?,category), price=COALESCE(?,price),
              grams=COALESCE(?,grams)
            WHERE name=? AND user_id=?`,
@@ -226,6 +261,7 @@ router.post("/bulk-import", auth, async (req, res) => {
             item.stock || 0,
             item.sku || null,
             item.hotkey || null,
+            item.barcode || null,
             item.category || null,
             item.price || null,
             item.grams || null,
@@ -236,12 +272,13 @@ router.post("/bulk-import", auth, async (req, res) => {
         updated++;
       } else {
         const [result] = await db.promise().query(
-          `INSERT INTO products (name,sku,hotkey,category,price,stock,grams,image,user_id)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO products (name,sku,hotkey,barcode,category,price,stock,grams,image,user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [
             item.name,
             item.sku || null,
             item.hotkey || null,
+            item.barcode || null,
             item.category || null,
             item.price || 0,
             item.stock || 0,
@@ -251,7 +288,6 @@ router.post("/bulk-import", auth, async (req, res) => {
           ],
         );
 
-        // Import ingredients if present in excel
         if (
           item.ingredients &&
           Array.isArray(item.ingredients) &&
