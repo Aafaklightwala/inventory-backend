@@ -8,7 +8,7 @@ router.get("/products/:userId", async (req, res) => {
 
   try {
     const [products] = await db.promise().query(
-      `SELECT p.id, p.name, p.sku, p.price, p.grams, p.stock, p.image,
+      `SELECT p.id, p.name, p.sku, p.price, p.grams, p.stock, p.image, p.category,
               IFNULL(
                 JSON_ARRAYAGG(
                   CASE WHEN pi.id IS NOT NULL
