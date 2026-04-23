@@ -18,7 +18,7 @@ app.use("/api/invoices", require("./routes/invoices"));
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/profile", require("./routes/profile.routes")); // ← NEW
-
+app.use("/api/online-orders", require("./routes/onlineOrders"));
 app.get("/", (req, res) => res.send("Inventory Backend Running"));
 
 app.listen(process.env.PORT, () => {

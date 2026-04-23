@@ -576,4 +576,50 @@ router.post("/cancel", auth, async (req, res) => {
   }
 });
 
+router.put("/:id/order-status", auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ["pending", "processing", "shipped", "completed"];
+
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid order status" });
+    }
+
+    // Make sure the invoice belongs to this user
+    const [rows] = await db
+      .promise()
+      .query("SELECT id FROM invoices WHERE id=? AND user_id=?", [
+        req.params.id,
+        req.user.id,
+      ]);
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Invoice not found" });
+    }
+
+    await db
+      .promise()
+      .query("UPDATE invoices SET order_status=? WHERE id=? AND user_id=?", [
+        status,
+        req.params.id,
+        req.user.id,
+      ]);
+
+    // Also update the linked online_order if exists
+    await db.promise().query(
+      `UPDATE online_orders 
+       SET status = ?
+       WHERE invoice_id = ? AND user_id = ?`,
+      [status, req.params.id, req.user.id],
+    );
+
+    res.json({ success: true, message: `Status updated to ${status}` });
+  } catch (err) {
+    console.error("Update order status error:", err);
+    res
+      .status(500)
+      .json({ message: "Error updating status", error: err.message });
+  }
+});
+
 module.exports = router;
