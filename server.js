@@ -20,7 +20,9 @@ app.use("/api/public", publicRoutes);
 app.use("/api/profile", require("./routes/profile.routes")); // ← NEW
 app.use("/api/online-orders", require("./routes/onlineOrders"));
 app.get("/", (req, res) => res.send("Inventory Backend Running"));
-
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 app.listen(process.env.PORT, () => {
   console.log("Server running on port", process.env.PORT);
 });
