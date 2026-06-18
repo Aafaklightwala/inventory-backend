@@ -1,11 +1,9 @@
-// products.routes.js — UPDATED with barcode support
-// Changes: barcode field added to GET, POST, PUT, bulk-import
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const auth = require("../middleware/auth");
 
-/* ── GET ALL (with ingredients + barcode) ──── */
+/* ── GET ALL ──── */
 router.get("/", auth, async (req, res) => {
   try {
     const [products] = await db.promise().query(
@@ -28,6 +26,7 @@ router.get("/", auth, async (req, res) => {
 
     const result = products.map((p) => ({
       ...p,
+      unit: p.unit || "g",
       ingredients: (() => {
         const raw =
           typeof p.ingredients === "string"
@@ -44,7 +43,7 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-/* ── GET BY BARCODE (used by scanner lookup) ── */
+/* ── GET BY BARCODE ── */
 router.get("/barcode/:code", auth, async (req, res) => {
   try {
     const [rows] = await db
@@ -55,13 +54,13 @@ router.get("/barcode/:code", auth, async (req, res) => {
       );
     if (!rows.length)
       return res.status(404).json({ message: "Product not found" });
-    res.json(rows[0]);
+    res.json({ ...rows[0], unit: rows[0].unit || "g" });
   } catch (err) {
     res.status(500).json(err);
   }
 });
 
-/* ── ADD PRODUCT (with barcode + ingredients) ── */
+/* ── ADD PRODUCT ── */
 router.post("/", auth, async (req, res) => {
   const {
     name,
@@ -72,6 +71,7 @@ router.post("/", auth, async (req, res) => {
     price,
     stock,
     grams,
+    unit,
     image,
     ingredients,
   } = req.body;
@@ -93,8 +93,8 @@ router.post("/", auth, async (req, res) => {
 
   try {
     const [result] = await db.promise().query(
-      `INSERT INTO products (name, sku, hotkey, barcode, category, price, stock, grams, image, user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO products (name, sku, hotkey, barcode, category, price, stock, grams, unit, image, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         sku || null,
@@ -104,6 +104,7 @@ router.post("/", auth, async (req, res) => {
         price,
         stock || 0,
         grams || 0,
+        unit || "g",
         image || null,
         req.user.id,
       ],
@@ -142,7 +143,7 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-/* ── UPDATE PRODUCT (with barcode + ingredients) ── */
+/* ── UPDATE PRODUCT ── */
 router.put("/:id", auth, async (req, res) => {
   const {
     name,
@@ -153,6 +154,7 @@ router.put("/:id", auth, async (req, res) => {
     price,
     stock,
     grams,
+    unit,
     image,
     ingredients,
   } = req.body;
@@ -174,7 +176,7 @@ router.put("/:id", auth, async (req, res) => {
   try {
     await db.promise().query(
       `UPDATE products
-       SET name=?, sku=?, hotkey=?, barcode=?, category=?, price=?, stock=?, grams=?, image=?
+       SET name=?, sku=?, hotkey=?, barcode=?, category=?, price=?, stock=?, grams=?, unit=?, image=?
        WHERE id=? AND user_id=?`,
       [
         name,
@@ -185,6 +187,7 @@ router.put("/:id", auth, async (req, res) => {
         price,
         stock,
         grams,
+        unit || "g",
         image || null,
         productId,
         userId,
@@ -221,7 +224,7 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
-/* ── DELETE PRODUCT ─────────────────────────── */
+/* ── DELETE PRODUCT ── */
 router.delete("/:id", auth, (req, res) => {
   db.query(
     "DELETE FROM products WHERE id=? AND user_id=?",
@@ -233,7 +236,7 @@ router.delete("/:id", auth, (req, res) => {
   );
 });
 
-/* ── BULK IMPORT (with barcode) ─────────────── */
+/* ── BULK IMPORT ── */
 router.post("/bulk-import", auth, async (req, res) => {
   const products = req.body;
   const userId = req.user.id;
@@ -255,7 +258,7 @@ router.post("/bulk-import", auth, async (req, res) => {
              sku=COALESCE(?,sku), hotkey=COALESCE(?,hotkey),
              barcode=COALESCE(?,barcode),
              category=COALESCE(?,category), price=COALESCE(?,price),
-             grams=COALESCE(?,grams)
+             grams=COALESCE(?,grams), unit=COALESCE(?,unit)
            WHERE name=? AND user_id=?`,
           [
             item.stock || 0,
@@ -265,6 +268,7 @@ router.post("/bulk-import", auth, async (req, res) => {
             item.category || null,
             item.price || null,
             item.grams || null,
+            item.unit || null,
             item.name,
             userId,
           ],
@@ -272,8 +276,8 @@ router.post("/bulk-import", auth, async (req, res) => {
         updated++;
       } else {
         const [result] = await db.promise().query(
-          `INSERT INTO products (name,sku,hotkey,barcode,category,price,stock,grams,image,user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO products (name, sku, hotkey, barcode, category, price, stock, grams, unit, image, user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.name,
             item.sku || null,
@@ -283,6 +287,7 @@ router.post("/bulk-import", auth, async (req, res) => {
             item.price || 0,
             item.stock || 0,
             item.grams || 0,
+            item.unit || "g",
             item.image || null,
             userId,
           ],
